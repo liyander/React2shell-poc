@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""
-React2Shell Scanner - High Fidelity Detection for RSC/Next.js RCE
-CVE-2025-55182 & CVE-2025-66478
+# Exploit Title: React & Next.js "React2Shell" - Remote Code Execution (RCE)
+# Google Dork: N/A
+# Date: 2026-02-28
+# Exploit Author: liyander (Liyander Rishwanth L)
+# Vendor Homepage: https://react.dev/ / https://nextjs.org/
+# Software Link: https://www.npmjs.com/package/react-server-dom-webpack
+# Version: React 19.0.0, 19.1.0, 19.1.1, 19.2.0 / Next.js 14.3.0-pre, 15.x, 16.0.6
+# Tested on: Linux / Windows
+# CVE: CVE-2025-55182, CVE-2025-66478
 
-PoC designed and developed by liyander (CyberGhost05)
-"""
+# --- Dependencies ---
+# pip install requests colorama (or whatever your specific requirements are)
+
+# --- Usage ---
+# python3 exploit.py -u http://target:3000
+
+# --- Exploit Code Begins Here ---
 
 import argparse
 import sys
